@@ -1,0 +1,199 @@
+erDiagram
+
+    %% ============================================================
+    %% NFT GREENHOUSE MANAGEMENT SYSTEM — Entity Relationship Diagram
+    %% ============================================================
+
+    USER {
+        uuid        id              PK
+        varchar     name
+        varchar     email           UK
+        varchar     password_hash
+        enum        role            "admin | operator | viewer"
+        boolean     is_active
+        timestamp   last_login_at
+        timestamp   created_at
+    }
+
+    GREENHOUSE {
+        uuid        id              PK
+        varchar     name
+        varchar     location
+        float       area_m2
+        int         talang_count
+        timestamp   created_at
+    }
+
+    TALANG {
+        uuid        id              PK
+        uuid        greenhouse_id   FK
+        varchar     code            "T01–T08"
+        varchar     name
+        int         slot_count
+        boolean     is_active
+        timestamp   created_at
+    }
+
+    BATCH {
+        uuid        id              PK
+        uuid        talang_id       FK
+        uuid        created_by      FK
+        varchar     batch_code      "B-YYYY-NNN"
+        varchar     variety         "Selada Bokor"
+        date        plant_date
+        date        estimated_harvest_date
+        enum        stage           "Semai | Transplant | Vegetatif | Panen | Selesai"
+        int         filled_slots
+        float       estimated_yield_gram
+        enum        health          "Baik | Perlu Perhatian | Kritis"
+        text        notes
+        timestamp   created_at
+        timestamp   updated_at
+    }
+
+    BATCH_STAGE_LOG {
+        uuid        id              PK
+        uuid        batch_id        FK
+        uuid        changed_by      FK
+        enum        from_stage
+        enum        to_stage
+        text        notes
+        timestamp   changed_at
+    }
+
+    SENSOR_READING {
+        uuid        id              PK
+        uuid        greenhouse_id   FK
+        uuid        device_id       FK
+        float       ppm
+        float       ph
+        float       temp_air_c
+        float       temp_water_c
+        float       humidity_pct
+        float       ec_ms
+        enum        ppm_status      "normal | low | high"
+        enum        ph_status       "normal | low | high"
+        enum        temp_status     "normal | low | high"
+        timestamp   recorded_at
+    }
+
+    IOT_DEVICE {
+        uuid        id              PK
+        uuid        greenhouse_id   FK
+        varchar     device_code
+        varchar     firmware_version
+        enum        status          "online | offline | error"
+        timestamp   last_ping_at
+        date        last_calibration_date
+        timestamp   created_at
+    }
+
+    ALERT {
+        uuid        id              PK
+        uuid        greenhouse_id   FK
+        uuid        sensor_reading_id FK
+        enum        parameter       "ppm | ph | temp_air | temp_water"
+        enum        level           "warning | danger"
+        float       value
+        float       threshold_min
+        float       threshold_max
+        text        message
+        text        corrective_action
+        boolean     is_resolved
+        uuid        resolved_by     FK
+        timestamp   resolved_at
+        timestamp   triggered_at
+    }
+
+    HARVEST {
+        uuid        id              PK
+        uuid        batch_id        FK
+        uuid        recorded_by     FK
+        varchar     harvest_code    "H-YYYY-NNN"
+        date        harvest_date
+        float       weight_gram
+        int         head_count
+        float       avg_weight_per_head_gram
+        enum        quality_grade   "A | B | C"
+        text        notes
+        timestamp   created_at
+    }
+
+    HARVEST_SALE {
+        uuid        id              PK
+        uuid        harvest_id      FK
+        float       weight_sold_gram
+        float       price_per_kg
+        float       total_revenue
+        varchar     buyer_name
+        date        sold_date
+        text        notes
+        timestamp   created_at
+    }
+
+    NUTRIENT_LOG {
+        uuid        id              PK
+        uuid        greenhouse_id   FK
+        uuid        recorded_by     FK
+        enum        action          "ab_mix_added | ph_up | ph_down | water_topup | full_replace"
+        float       amount_ml
+        text        notes
+        timestamp   recorded_at
+    }
+
+    PARAMETER_CONFIG {
+        uuid        id              PK
+        uuid        greenhouse_id   FK
+        enum        stage           "Semai | Transplant | Vegetatif | Panen"
+        float       ppm_min
+        float       ppm_max
+        float       ph_min
+        float       ph_max
+        float       temp_air_min
+        float       temp_air_max
+        float       temp_water_min
+        float       temp_water_max
+        timestamp   updated_at
+        uuid        updated_by      FK
+    }
+
+    NOTIFICATION {
+        uuid        id              PK
+        uuid        alert_id        FK
+        uuid        user_id         FK
+        enum        channel         "in_app | telegram | whatsapp"
+        enum        status          "sent | failed | pending"
+        timestamp   sent_at
+    }
+
+    %% ============================================================
+    %% RELATIONSHIPS
+    %% ============================================================
+
+    USER                ||--o{ BATCH              : "creates"
+    USER                ||--o{ BATCH_STAGE_LOG    : "logs"
+    USER                ||--o{ HARVEST            : "records"
+    USER                ||--o{ NUTRIENT_LOG       : "records"
+    USER                ||--o{ ALERT              : "resolves"
+    USER                ||--o{ PARAMETER_CONFIG   : "configures"
+    USER                ||--o{ NOTIFICATION       : "receives"
+
+    GREENHOUSE          ||--|{ TALANG              : "has"
+    GREENHOUSE          ||--o{ SENSOR_READING      : "generates"
+    GREENHOUSE          ||--o{ IOT_DEVICE          : "has"
+    GREENHOUSE          ||--o{ ALERT               : "triggers"
+    GREENHOUSE          ||--o{ NUTRIENT_LOG        : "logs"
+    GREENHOUSE          ||--o{ PARAMETER_CONFIG    : "configures"
+
+    TALANG              ||--o{ BATCH               : "hosts"
+
+    BATCH               ||--o{ BATCH_STAGE_LOG     : "tracks"
+    BATCH               ||--o| HARVEST             : "produces"
+
+    HARVEST             ||--o{ HARVEST_SALE        : "sold via"
+
+    IOT_DEVICE          ||--o{ SENSOR_READING      : "produces"
+
+    SENSOR_READING      ||--o{ ALERT               : "triggers"
+
+    ALERT               ||--o{ NOTIFICATION        : "notifies via"
