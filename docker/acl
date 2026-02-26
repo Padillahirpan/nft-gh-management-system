@@ -1,0 +1,17 @@
+# Mosquitto Access Control List (ACL)
+# NFT Greenhouse Management System
+
+# User greenhouse (IoT devices) can publish to sensor topics
+user greenhouse
+topic write greenhouse/+/sensor
+topic write greenhouse/+/status
+topic read greenhouse/commands/#
+
+# User backend (server) can read all sensor topics and write commands
+user backend
+topic read greenhouse/+/sensor
+topic read greenhouse/+/status
+topic write greenhouse/commands/#
+
+# Pattern for all greenhouse topics
+pattern read greenhouse/#

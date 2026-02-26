@@ -1,0 +1,110 @@
+# NFT Greenhouse Management System - Production Docker Compose
+# Full stack: Frontend, Backend, PostgreSQL, TimescaleDB, MQTT
+
+version: '3.9'
+
+services:
+  # ========================
+  # PostgreSQL + TimescaleDB
+  # ========================
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: nft-greenhouse-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-nft_greenhouse}
+      TS_TUNE_MEMORY: ${TS_MEMORY:-2GB}
+      TS_TUNE_NUM_CPUS: ${TS_CPUS:-4}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/home/postgres/pgdata/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - greenhouse-network
+
+  # ========================
+  # MQTT Broker (Mosquitto)
+  # ========================
+  mosquitto:
+    image: eclipse-mosquitto:2.0.18
+    container_name: nft-greenhouse-mosquitto
+    restart: always
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_logs:/mosquitto/log
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - greenhouse-network
+
+  # ========================
+  # Backend API
+  # ========================
+  backend:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    container_name: nft-greenhouse-backend
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-nft_greenhouse}
+      JWT_SECRET: ${JWT_SECRET}
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      MQTT_USERNAME: ${MQTT_USERNAME:-greenhouse}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
+    ports:
+      - "${BACKEND_PORT:-3001}:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    networks:
+      - greenhouse-network
+
+  # ========================
+  # Frontend
+  # ========================
+  frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: Dockerfile
+    container_name: nft-greenhouse-frontend
+    restart: always
+    environment:
+      VITE_API_BASE_URL: ${FRONTEND_API_URL:-http://localhost:3001}
+      VITE_WS_URL: ${FRONTEND_WS_URL:-ws://localhost:3001}
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      - backend
+    networks:
+      - greenhouse-network
+
+volumes:
+  postgres_data:
+    driver: local
+  mosquitto_data:
+    driver: local
+  mosquitto_logs:
+    driver: local
+
+networks:
+  greenhouse-network:
+    driver: bridge

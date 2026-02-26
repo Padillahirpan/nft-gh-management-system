@@ -1,0 +1,90 @@
+# NFT Greenhouse Management System - Development Docker Compose
+# Services: PostgreSQL + TimescaleDB, MQTT Mosquitto
+
+version: '3.9'
+
+services:
+  # ========================
+  # PostgreSQL + TimescaleDB
+  # ========================
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: nft-greenhouse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: nft_greenhouse
+      TS_TUNE_MEMORY: 2GB
+      TS_TUNE_NUM_CPUS: 4
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/home/postgres/pgdata/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - greenhouse-network
+
+  # ========================
+  # MQTT Broker (Mosquitto)
+  # ========================
+  mosquitto:
+    image: eclipse-mosquitto:2.0.18
+    container_name: nft-greenhouse-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"   # MQTT
+      - "9001:9001"   # WebSocket (optional)
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_logs:/mosquitto/log
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - greenhouse-network
+
+  # ========================
+  # PgAdmin (Optional - for database management)
+  # ========================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: nft-greenhouse-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@greenhouse.local
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - greenhouse-network
+    profiles:
+      - tools
+
+volumes:
+  postgres_data:
+    driver: local
+  mosquitto_data:
+    driver: local
+  mosquitto_logs:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+networks:
+  greenhouse-network:
+    driver: bridge

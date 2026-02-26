@@ -1,0 +1,412 @@
+// NFT Greenhouse Management System - Prisma Schema
+// Database: PostgreSQL with TimescaleDB extension for time-series data
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ========================
+// ENUMS
+// ========================
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+enum TalangStage {
+  SEMAI        // Day 1-7
+  TRANSPLANT   // Day 8-14
+  VEGETATIF    // Day 15-28
+  PANEN        // Day 28+
+}
+
+enum TalangHealth {
+  BAIK
+  PERLU_PERHATIAN
+  KRITIS
+}
+
+enum HarvestGrade {
+  A
+  B
+  C
+}
+
+enum SaleStatus {
+  STOK
+  TERJUAL
+}
+
+enum AlertSeverity {
+  WARNING
+  DANGER
+}
+
+enum AlertStatus {
+  ACTIVE
+  RESOLVED
+}
+
+enum NotificationChannel {
+  IN_APP
+  TELEGRAM
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+// ========================
+// USERS & AUTHENTICATION
+// ========================
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String   // Hashed with bcrypt
+  name      String
+  role      UserRole @default(OPERATOR)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  batchStageLogs  BatchStageLog[]
+  harvests        Harvest[]
+  resolvedAlerts  Alert[]         @relation("ResolvedBy")
+  notifications   Notification[]
+
+  @@map("users")
+}
+
+// ========================
+// GREENHOUSE & TALANG
+// ========================
+
+model Greenhouse {
+  id          String   @id @default(uuid())
+  name        String
+  location    String?
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  talangs Talang[]
+
+  @@map("greenhouses")
+}
+
+model Talang {
+  id               String        @id
+  greenhouseId     String?
+  greenhouse       Greenhouse?   @relation(fields: [greenhouseId], references: [id])
+  name             String        // e.g., "Talang 01", "T01"
+  position         Int?          // Physical position in greenhouse
+  totalSlots       Int           @default(20)
+
+  // Current batch info
+  currentBatchId   String?       @unique
+  currentBatch     Batch?        @relation(fields: [currentBatchId], references: [id])
+
+  isActive         Boolean       @default(true)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  // Relations
+  batches          Batch[]
+
+  @@map("talangs")
+}
+
+// ========================
+// BATCH / PLANTING CYCLE
+// ========================
+
+model Batch {
+  id                String      @id @default(uuid())
+  talangId          String
+  talang            Talang      @relation(fields: [talangId], references: [id], onDelete: Cascade)
+
+  // Batch info
+  batchNumber       String      // e.g., "B-2026-001"
+  variety           String      // e.g., "Selada Bokor Hijau"
+
+  // Dates
+  plantDate         DateTime    @default(now())
+  estimatedHarvestDate DateTime
+  actualHarvestDate DateTime?
+
+  // Stage tracking
+  stage             TalangStage @default(SEMAI)
+  daysSincePlant    Int         @default(0)
+
+  // Plant health
+  filledSlots       Int         @default(0)
+  health            TalangHealth @default(BAIK)
+  estimatedYield    Int?        // in grams
+
+  // Notes
+  notes             String?
+
+  // Metadata
+  createdBy         String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  // Relations
+  stageLogs         BatchStageLog[]
+  harvests          Harvest[]
+
+  @@map("batches")
+}
+
+model BatchStageLog {
+  id          String      @id @default(uuid())
+  batchId     String
+  batch       Batch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  fromStage   TalangStage?
+  toStage     TalangStage
+  changedBy   String?
+  changedByUser User?      @relation(fields: [changedBy], references: [id])
+  notes       String?
+  changedAt   DateTime    @default(now())
+
+  @@map("batch_stage_logs")
+}
+
+// ========================
+// SENSOR READINGS (Time-series)
+// ========================
+
+model SensorReading {
+  id              String   @id @default(uuid())
+
+  // Sensor values
+  ppm             Float
+  ph              Float
+  tempWater       Float    // Celsius
+  tempAir         Float    // Celsius
+  humidity        Float?   // Percentage
+  ec              Float?   // Electrical Conductivity (mS/cm)
+
+  // Status indicators
+  ppmStatus       String   @default("normal")   // normal, warning, danger
+  phStatus        String   @default("normal")
+  tempStatus      String   @default("normal")
+
+  // Device info
+  deviceId        String?
+  device          IoTDevice? @relation(fields: [deviceId], references: [id])
+
+  // Metadata
+  recordedAt      DateTime @default(now())
+  isManual        Boolean  @default(false)
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  @@map("sensor_readings")
+}
+
+model IoTDevice {
+  id          String         @id @default(uuid())
+  name        String         @unique  // e.g., "ESP32-Greenhouse-01"
+  type        String                  @default("ESP32")
+  location    String?
+  isActive    Boolean        @default(true)
+  lastSeen    DateTime?
+  config      Json?          // Device-specific config
+
+  // Relations
+  readings    SensorReading[]
+
+  @@map("iot_devices")
+}
+
+// ========================
+// ALERTS & NOTIFICATIONS
+// ========================
+
+model Alert {
+  id              String        @id @default(uuid())
+
+  // Alert details
+  type            String        // ppm, ph, temp_air, temp_water
+  severity        AlertSeverity
+  message         String
+  currentValue    Float
+  thresholdMin    Float?
+  thresholdMax    Float?
+
+  // Suggested action
+  action          String?
+
+  // Status
+  status          AlertStatus   @default(ACTIVE)
+  resolvedAt      DateTime?
+  resolvedBy      String?
+  resolvedByUser  User?         @relation("ResolvedBy", fields: [resolvedBy], references: [id])
+  resolutionNotes String?
+
+  // Metadata
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@map("alerts")
+}
+
+model Notification {
+  id          String              @id @default(uuid())
+
+  // Notification details
+  alertId     String?
+  title       String
+  message     String
+  channel     NotificationChannel
+
+  // Status
+  status      NotificationStatus  @default(PENDING)
+  sentAt      DateTime?
+  error       String?
+
+  // Recipient
+  userId      String?
+  user        User?               @relation(fields: [userId], references: [id])
+
+  // Metadata
+  createdAt   DateTime            @default(now())
+
+  @@map("notifications")
+}
+
+// ========================
+// HARVEST & SALES
+// ========================
+
+model Harvest {
+  id              String        @id @default(uuid())
+  batchId         String
+  batch           Batch         @relation(fields: [batchId], references: [id])
+
+  // Harvest data
+  harvestDate     DateTime      @default(now())
+  totalWeight     Int           // in grams
+  headCount       Int
+  avgWeight       Float         // average weight per head (grams)
+
+  // Grading
+  gradeACount     Int           @default(0)
+  gradeAWeight    Int           @default(0)
+  gradeBCount     Int           @default(0)
+  gradeBWeight    Int           @default(0)
+  gradeCCount     Int           @default(0)
+  gradeCWeight    Int           @default(0)
+
+  // Notes
+  notes           String?
+
+  // Recording
+  recordedBy      String?
+  recordedByUser  User?         @relation(fields: [recordedBy], references: [id])
+
+  // Metadata
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  sales           HarvestSale[]
+
+  @@map("harvests")
+}
+
+model HarvestSale {
+  id          String      @id @default(uuid())
+  harvestId   String
+  harvest     Harvest     @relation(fields: [harvestId], references: [id])
+
+  // Sale data
+  saleDate    DateTime    @default(now())
+  weight      Int         // in grams
+  price       Float?      // per kg
+  totalAmount Float?      // total sales amount
+  status      SaleStatus  @default(STOK)
+
+  // Customer info
+  customerName String?
+  notes       String?
+
+  // Metadata
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@map("harvest_sales")
+}
+
+// ========================
+// NUTRIENT LOGS
+// ========================
+
+model NutrientLog {
+  id          String   @id @default(uuid())
+
+  // Action details
+  action      String   // add_nutrient, change_water, ph_up, ph_down
+  description String?
+
+  // Measurements
+  ppmBefore   Float?
+  ppmAfter    Float?
+  phBefore    Float?
+  phAfter     Float?
+
+  // Amount used
+  amount      Float?   // in ml or grams
+  unit        String?  @default("ml")
+
+  // Metadata
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  @@map("nutrient_logs")
+}
+
+// ========================
+// PARAMETER CONFIGS
+// ========================
+
+model ParameterConfig {
+  id          String   @id @default(uuid())
+
+  // Configuration
+  stage       TalangStage @unique
+  ppmMin      Int
+  ppmMax      Int
+  phMin       Float
+  phMax       Float
+  tempWaterMin Float
+  tempWaterMax Float
+  tempAirMin   Float
+  tempAirMax   Float
+  humidityMin  Int?
+  humidityMax  Int?
+  ecMin        Float?
+  ecMax        Float?
+
+  // Metadata
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("parameter_configs")
+}
